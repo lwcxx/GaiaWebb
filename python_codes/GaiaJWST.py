@@ -1,0 +1,328 @@
+#!/usr/bin/env python
+
+from __future__ import print_function
+
+import sys
+import os
+
+import numpy as np
+import pandas as pd
+
+import argparse
+
+import GaiaJWSTmod as gh
+
+import warnings
+warnings.filterwarnings("ignore")
+
+def gaiajwst(argv):  
+   """
+   Inputs
+   """
+   
+   examples = '''Examples:
+   
+   gaiajwst --name "Sculptor dSph"
+
+   gaiajwst --name "NGC 5053" --use_members --use_sat --quiet
+   
+   gaiajwst --ra 201.405 --dec -47.667 --search_radius 0.1 --jwst_filters "F200W" "F356W" --use_members --use_sat --preselect_cmd
+
+   '''
+
+   parser = argparse.ArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter, usage='%(prog)s [options]', description='GaiaJWST computes proper motions (PM) combining JWST and Gaia data.', epilog=examples)
+   
+   # Search options
+   parser.add_argument('--name', type=str, default = 'Output', help='Name for the Output table.')
+   parser.add_argument('--ra', type=float, default = None, help='Central R.A.')
+   parser.add_argument('--dec', type=float, default = None, help='Central Dec.')
+   parser.add_argument('--search_radius', type=float, default = None, help='Radius of search in degrees.')
+   parser.add_argument('--search_width', type=float, default = None, help='Width of the search rectangule in degrees.')
+   parser.add_argument('--search_height', type=float, default = None, help='Height of the search rectangule in degrees.')
+   parser.add_argument('--min_gmag', type=float, default = 16.0, help='Brighter G magnitude')
+   parser.add_argument('--max_gmag', type=float, default = 21.5, help='Fainter G magnitude')
+
+   # Gaia options
+   parser.add_argument('--source_table', type = str, default = 'gaiadr3.gaia_source', help='Gaia source table. Default is gaiadr3.gaia_source.')
+   parser.add_argument('--save_individual_queries', action='store_true', help='If True, the code will save the individual queries.')
+   parser.add_argument('--sigma_flux_excess_factor', type=float, default=3., help='Sigma used for clipping in flux_excess_factor. Default is 3.')
+   parser.add_argument('--only_5p_solutions', action='store_true', help='If True, only 5p solution stars will be considered as "good" sources.')
+   parser.add_argument('--date_second_epoch', type=int, nargs='+', default= [5, 28, 2017], help='Second epoch adquisition date. Default is Gaia DR3 (05-28-2017).')
+   parser.add_argument('--date_reference_second_epoch', type=str, default= 'J2016.0', help='Second epoch reference date. Default is Gaia DR3 J2016.0.')
+
+   # JWST options
+   parser.add_argument('--jwst1pass', action='store_true', help='Force the program to perform the search for sources in the JWST images. Default is False, which will use existing files if any.')
+   parser.add_argument('--Python_JWST1Pass', action='store_true', default=False, help='If True, run the python version of jwst1pass. Default is False (run Fortran version).')
+   parser.add_argument('--fmin', type=int, default= None, help='Minimum flux above the sky to subtract a source in the JWST image. Default is automatic, computed from the JWST integration time.')
+   parser.add_argument('--auto_fmin_mult', type=float, default=1.0, help='Multiplication to the automatic flux min above the sky for jwst1pass. Default is 1.')
+   parser.add_argument('--fmin_thresh', type=float, default=5.0, help='Hard lower flux floor in MJy/sr for Python jwst1pass engine. Default is 5.0.')
+   parser.add_argument('--mag_limit', type=float, default=28.0, help='Faint AB magnitude limit for Python jwst1pass engine. Default is 28.0.')
+   parser.add_argument('--pixel_scale', type=float, default= None, help='Pixel scale in arcsec/pixel used to compute the tangential plane during the match between epochs. Default is automatic, and will take the value from the JWST images.')
+   parser.add_argument('--jwst_filters', type=str, nargs='+', default = ['any'], help='Required filter for the JWST images. Default all filters. They can be added as a list, e.g. "F200W" "F356W".')
+   parser.add_argument('--instrument', type=lambda s: s.upper(), nargs='+', default = None, choices = ['NIRISS', 'NIRCAM', 'MIRI'], help='Restrict the MAST search to specific JWST instrument(s). Default is None, which searches all supported instruments (NIRISS, NIRCAM, MIRI). They can be added as a list, e.g. "NIRISS" "MIRI".')
+   parser.add_argument('--jwst_integration_time_min', type=float, default = 2, help='Required minimum average integration time for a set of JWST images. This quantity is a limit on the average exposure time of an entire set of observations. Therefore, longer and shorter exposures may be available in an specific data set.')
+   parser.add_argument('--jwst_integration_time_max', type=float, default = 2000, help='Required maximum average integration time for a set of JWST images. This quantity is a limit on the average exposure time of an entire set of observations. Therefore, longer and shorter exposures may be available in an specific data set. Exposures with less that 500 seconds of integration time are preferred. The default value is 2000 seconds, which is far more than the optimal value, but allow datasets with combinations of short and long exposures to be considered.')
+   parser.add_argument('--time_baseline', type=float, default = -10000000, help='Minimum time baseline with respect to Gaia EDR3 in days. Default 2190.')
+   parser.add_argument('--project', type=str, nargs='+', default = ['JWST'], help='Processing project. E.g. HST, HLA, EUVE, hlsp_legus. Default JWST. They can be added as a list, e.g. "HST", "HLA".')
+   parser.add_argument('--field_id', type=str, nargs='+', default = None, help='Specify the Ids of the fields to download. This is an internal id created by GaiaJWST (field_id). The default value, "y", will download all the available JWST observations fulfilling the required conditions. The user can also specify "n" for none, or the specific ids separated by spaces.')
+   parser.add_argument('--jwst_im_type', type=str, default = '_cal', help='Type of JWST image to run jwst1pass on. Should be _cal (default) or _rate.')
+
+   # JWST-Gaia match options
+   parser.add_argument('--use_only_good_gaia', action='store_true', help = 'Force GaiaJWST to use all the Gaia stars to make the alignment with JWST. Otherwise, GaiaJWST will use only good measurements based on Gaia EDR3 quality flags. Useful when not enough good stars are available.')
+   parser.add_argument('--use_members', action='store_true', help='Whether to use only member stars for the epochs alignment or to use all available stars.')
+   parser.add_argument('--preselect_cmd', action='store_true', help='If "--use_members" is in use, it enables the user to manually select member stars in the color-magnitude diagram prior to the automatic selection in the PM space. It helps when the method does not converge due to contamination from non-member stars.')
+   parser.add_argument('--preselect_pm', action='store_true', help='If "--use_members" is in use, it enables the user to manually select member stars in the vector-point diagram prior to the automatic selection in the PM space. It helps when the method does not converge due to contamination from non-member stars, or when there are a significant amount of contaminants.')
+   parser.add_argument('--clipping_prob_pm', type=float, default=3, help='Ratio used for clipping in PM when selecting members. Default is 3 sigma.')
+   parser.add_argument('--ask_user_stop', action='store_true', help='It ask the user whether to continue with the next iteration instead of continuing until convergence is reached. It only works when "--use_only_good_gaia" or "--rewind_stars" are in use. It can be useful when convergence fails.')
+   parser.add_argument('--max_iterations', type=int, default = 10, help='Maximum number of allowed iterations before convergence. Default 10.')
+   parser.add_argument('--pm_n_components', type=int, default=1, help='Number of Gaussian components for pm and parallax clustering. Default is 1.')
+   parser.add_argument('--previous_xym2pm', action='store_true', default=False, help='Force the program to perform the match between Gaia and JWST sources. If False, the code will use existing files if any.')
+   parser.add_argument('--rewind_stars', action='store_true', help='Force the program to use the PMs to rewind the stars from their second epoch to the first one before the matching.')
+   parser.add_argument('--fix_mat', action='store_true', help='Force the program to use only the best stars in the MAT files to perform the alignment in the next iteration.')
+   parser.add_argument('--max_separation', type=float, default= None, help='Maximum allowed separation in pixels during the match between epochs. Default 5 pixels.')
+   parser.add_argument('--use_sat', action='store_true', help='Force the program to use saturated stars during the match between epochs. Default is False.')
+   parser.add_argument('--wcs_search_radius', type=float, default= None, help='When set to a radius (in arcsec), the program search the closest Gaia star to each bright star in the JWST image within that distance to perform a pre-alignment between the two frames. Useful when not many stars are available. Default is None.')
+   parser.add_argument('--min_stars_alignment', type=int, default = 10, help='Minimum number of stars per JWST image to be used for the epochs alignment. Default 10.')
+   parser.add_argument('--no_amplifier_based', action='store_true', help='Force the program to use only one channel instead of amplifier-based transformations.')
+   parser.add_argument('--min_stars_amp', type=int, default = 10, help='Minimum number of stars per JWST amplifier to compute transformations. Default is 10.')
+   parser.add_argument('--no_error_correction', action='store_true', help='By default, GaiaJWST will multiply the Gaia positional errors by 1.05 and 1.22 for 5-parameter and 6-parameter solutions, respectively. This flag deactivates that behavior.')
+   parser.add_argument('--use_stat', type=str, default = 'wmean', help = ' By default, the code will try to make use of the errors obtained for each individual JWST image in order to compute a final error-weighted mean for the PMs. This option forces the code to use a normal arithmetic mean or the median instead. Useful if you think all JWST images should have exactly the same weight. Options are "mean" for the arithmetic mean, "wmean" for the error-weighted mean, and "median" for the median')
+
+   #Miscellaneus options
+   parser.add_argument('--n_processes', type = int, default = -2, help='The number of jobs to run in parallel. Default is -2, which uses all the available processors except one. For single-threaded execution use 1. In order to use all the processors, use -1. You can also use specific numbers such, for example, 13 processors.')
+   parser.add_argument('--load_existing', action='store_true', help='With this flag, the code will try to resume the previous Gaia search and load previous individual queries. Useful when a specific search is failing due to connection problems.')
+   parser.add_argument('--no_plots', action='store_true', help='This flag prevents the code from making any plot. Useful when using distributed computing or in situations when python is not able to open an plotting device.')
+   parser.add_argument('--remove_previous_files', action='store_true', help='Remove previous intermediate files.')
+   parser.add_argument('--save_temporary_results', action='store_true', help='Save temporary results. Useful to study the evolution between iterations.')
+   parser.add_argument('--verbose', action='store_true', help='It controls the program verbosity. Default True.')
+   parser.add_argument('--quiet', action='store_true', help='This flag deactivate the interactivity of GaiaJWST. When used, GaiaJWST will use all the default values without asking the user. This flag override and prevent the "--preselect_cmd" option.')
+
+   if len(argv)==0:
+      parser.print_help(sys.stderr)
+      sys.exit(1)
+
+   args = parser.parse_args(argv)
+   args = gh.get_object_properties(args)
+
+   """
+   The script creates directories and set files names
+   """   
+   gh.create_dir(args.base_path)
+   gh.create_dir(args.JWST_path)
+   gh.create_dir(args.Gaia_path)
+   gh.create_dir(args.GaiaJWST_output)
+   if args.save_individual_queries:
+      gh.create_dir(args.Gaia_ind_queries_path)
+
+   """
+   The script tries to load an existing Gaia table, otherwise it will download it from the Gaia archive.
+   """
+   # Get the absolute path to the directory where this script is located
+   script_dir = os.path.dirname(os.path.abspath(__file__))
+   # The installation path is the parent directory (GaiaWebb-master)
+   installation_path = os.path.abspath(os.path.join(script_dir, ".."))
+   
+   gh.remove_file(args.exec_path)
+   os.symlink(installation_path, args.exec_path)
+
+   astrometric_cols = 'l, b, ra, ra_error, dec, dec_error, parallax, parallax_error, pmra, pmra_error, pmdec, pmdec_error, radial_velocity, radial_velocity_error, ra_dec_corr, ra_parallax_corr, ra_pmra_corr, ra_pmdec_corr, dec_parallax_corr, dec_pmra_corr, dec_pmdec_corr, parallax_pmra_corr, parallax_pmdec_corr, pmra_pmdec_corr'
+
+   photometric_cols = 'phot_g_mean_flux, phot_g_mean_mag AS gmag, (1.086*phot_g_mean_flux_error/phot_g_mean_flux) AS gmag_error, phot_bp_mean_mag AS bpmag, (1.086*phot_bp_mean_flux_error/phot_bp_mean_flux) AS bpmag_error, phot_rp_mean_mag AS rpmag, (1.086*phot_rp_mean_flux_error/phot_rp_mean_flux) AS rpmag_error, bp_rp, sqrt( power( (1.086*phot_bp_mean_flux_error/phot_bp_mean_flux), 2) + power( (1.086*phot_rp_mean_flux_error/phot_rp_mean_flux), 2) ) as bp_rp_error'
+
+   quality_cols = 'ecl_lat, pseudocolour, nu_eff_used_in_astrometry, visibility_periods_used, astrometric_excess_noise_sig, astrometric_params_solved, astrometric_n_good_obs_al, astrometric_chi2_al, phot_bp_rp_excess_factor, ruwe, (phot_bp_n_blended_transits+phot_rp_n_blended_transits) *1.0 / (phot_bp_n_obs + phot_rp_n_obs) AS beta, ipd_gof_harmonic_amplitude, phot_bp_n_contaminated_transits, phot_rp_n_contaminated_transits, ref_epoch'
+
+   query, quality_cols = gh.columns_n_conditions(args.source_table, astrometric_cols, photometric_cols, quality_cols, args.ra, args.dec, args.search_width, args.search_height)
+
+   try:
+      Gaia_table = pd.read_csv(args.Gaia_clean_table_filename)
+   except:
+      Gaia_table, Gaia_queries = gh.incremental_query(query, args.area, min_gmag = args.min_gmag, max_gmag = args.max_gmag, n_processes = args.n_processes,
+                                                   save_individual_queries = args.save_individual_queries, name = args.name)
+
+      f = open(args.queries, 'w+')
+      if type(Gaia_queries) is list:
+         for Gaia_query in Gaia_queries:
+            f.write('%s\n'%Gaia_query)
+            f.write('\n')
+      else:
+         f.write('%s\n'%Gaia_queries)
+      f.write('\n')
+      f.close()
+
+      # We fix some of the variables using the codes published with EDR3
+      Gaia_table['corrected_flux_excess_factor'] = gh.correct_flux_excess_factor(Gaia_table['bp_rp'], Gaia_table['phot_bp_rp_excess_factor'])
+
+      clean_label = gh.pre_clean_data(Gaia_table['gmag'], Gaia_table['corrected_flux_excess_factor'], Gaia_table['ruwe'], Gaia_table['ipd_gof_harmonic_amplitude'], Gaia_table['visibility_periods_used'], Gaia_table['astrometric_excess_noise_sig'], Gaia_table['astrometric_params_solved'], sigma_flux_excess_factor = args.sigma_flux_excess_factor, use_5p = args.only_5p_solutions)
+
+      Gaia_table['clean_label'] = clean_label
+
+      Gaia_table.to_csv(args.Gaia_clean_table_filename, index = False)
+   
+   if not args.no_error_correction:
+      """
+      The script increase a bit all positional errors according to EDR3 verification papers.
+      """
+      Gaia_table = gh.get_real_error(Gaia_table)
+
+   """
+   The script tries to load an existing JWST table, otherwise it will download it from the MAST archive.
+   """
+   if args.load_existing:
+      obs_table = pd.read_csv(args.JWST_obs_table_filename)
+      data_products_by_obs = pd.read_csv(args.JWST_data_table_products_filename)
+
+   else:
+      obs_table, data_products_by_obs = gh.search_mast(args.ra, args.dec, search_width = args.search_width,
+         search_height = args.search_height, filters = args.jwst_filters,
+         project = args.project, t_exptime_min = args.jwst_integration_time_min,
+         t_exptime_max = args.jwst_integration_time_max, date_second_epoch = args.date_second_epoch,
+         time_baseline = args.time_baseline,jwst_im_type=args.jwst_im_type, instrument = args.instrument)
+    
+      
+      """
+      Plot results and find Gaia stars within JWST fields
+      """
+      obs_table = gh.plot_fields(Gaia_table, obs_table, args.JWST_path, use_only_good_gaia = args.use_only_good_gaia,  min_stars_alignment = args.min_stars_alignment, no_plots = args.no_plots, name = args.base_path+args.base_file_name+'_search_footprint.pdf')
+        
+      print("obs_table GaiaJWST", obs_table)
+      print("obs_table['gaia_stars_per_obs']", obs_table['gaia_stars_per_obs'])
+        
+   if (not obs_table.empty) and (obs_table['gaia_stars_per_obs'] >= args.min_stars_alignment).any():
+
+      """
+      Select only observations with enough number of stars
+      """
+      obs_table = obs_table.loc[obs_table['gaia_stars_per_obs'] >= args.min_stars_alignment, :]
+
+      """
+      Ask whether the user wish to download the available JWST images
+      """
+      print(obs_table.loc[:, ['obsid', 'instrument_name', 'filters', 'target_name', 'n_exp', 'i_exptime', 'obs_time', 't_baseline', 'gaia_stars_per_obs', 'proposal_id', 's_ra', 's_dec', 'field_id']].to_string(index=False), '\n')
+
+      if (args.quiet is True) and (args.field_id is None):
+         print('GaiaJWST will use the above sets of observations.\n')
+         JWST_obs_to_use = 'y'
+      elif args.field_id is not None:
+         print('GaiaJWST will use the observations sets %s.'%(' '.join(str(p) for p in args.field_id) ))
+         JWST_obs_to_use = ' '.join([str(p) for p in args.field_id])
+      else:
+         print('Would you like to use above JWST observations?\n')
+         print("Type 'y' or just press enter for all observations, 'n' for none. Type the id within parentheses at the right (field_id) if you wish to use that specific set of observations. You can enter several ids separated by space. \n")
+         JWST_obs_to_use = input('Please type your answer and press enter: ') or 'y'
+         print('\n')
+
+      try:
+         JWST_obs_to_use = gh.str2bool(JWST_obs_to_use)
+      except:
+         try:
+            JWST_obs_to_use = list(set([obsid for obsid in obs_table.obsid[[int(obsid)-1 for obsid in JWST_obs_to_use.split()]] if np.isfinite(obsid)]))
+         except:
+            print('No valid input. Not downloading observations.')
+            JWST_obs_to_use = False
+
+      if JWST_obs_to_use is not False:
+         if JWST_obs_to_use is True:
+            JWST_obs_to_use = list(obs_table['obsid'].values)
+         if not args.load_existing:
+            jwst_images = gh.download_JWST_images(data_products_by_obs.loc[data_products_by_obs['parent_obsid'].isin(JWST_obs_to_use), :], path = args.JWST_path)
+      else:
+         print('\nExiting now.\n')
+         gh.remove_file(args.exec_path)
+         sys.exit(1)
+
+      """
+      Select only flc
+      """
+      #drz_images = data_products_by_obs[(data_products_by_obs['productSubGroupDescription'] == 'DRZ') & (data_products_by_obs['parent_obsid'].isin(JWST_obs_to_use))]
+      #flc_images = data_products_by_obs[(data_products_by_obs['productSubGroupDescription'] == args.jswt_im_type[1:].upper()) & (data_products_by_obs['parent_obsid'].isin(JWST_obs_to_use))]
+      GSRATE_images = data_products_by_obs[(data_products_by_obs['productSubGroupDescription'] == 'RATE') & (data_products_by_obs['parent_obsid'].isin(JWST_obs_to_use))] 
+      GSCAL_images = data_products_by_obs[(data_products_by_obs['productSubGroupDescription'] == args.jwst_im_type[1:].upper()) & (data_products_by_obs['parent_obsid'].isin(JWST_obs_to_use))]
+      
+
+      """
+      Call jwst1pass_GH
+      """
+      gh.launch_jwst1pass_GH(GSCAL_images, JWST_obs_to_use, args.JWST_path, args.exec_path,
+         force_fmin = args.fmin, auto_fmin_mult=args.auto_fmin_mult,
+         force_jwst1pass = args.jwst1pass, n_processes = args.n_processes,
+         verbose = args.verbose, jwst_im_type=args.jwst_im_type,
+         python_jwst1pass=args.Python_JWST1Pass,
+         fmin_thresh=args.fmin_thresh, mag_limit=args.mag_limit)
+
+      """
+      Call xym2pm_GH
+      """
+      # key error: print('filters try', Gaia_table['F356W_wmean'], Gaia_table['F356W_median'])
+    
+      Gaia_table_jwst, lnks = gh.launch_xym2pm_GH(Gaia_table.copy(), GSCAL_images, JWST_obs_to_use, args.JWST_path, args.exec_path, args.date_reference_second_epoch, only_use_members = args.use_members, preselect_cmd = args.preselect_cmd, preselect_pm = args.preselect_pm, rewind_stars = args.rewind_stars, force_pixel_scale = args.pixel_scale, force_max_separation = args.max_separation, force_use_sat = args.use_sat, fix_mat = args.fix_mat, no_amplifier_based = args.no_amplifier_based, min_stars_amp = args.min_stars_amp, force_wcs_search_radius = args.wcs_search_radius, n_components = args.pm_n_components, clipping_prob = args.clipping_prob_pm, use_only_good_gaia = args.use_only_good_gaia, min_stars_alignment = args.min_stars_alignment, use_stat = args.use_stat, no_plots = args.no_plots, verbose = args.verbose, quiet = args.quiet, ask_user_stop = args.ask_user_stop, max_iterations = args.max_iterations, previous_xym2pm = args.previous_xym2pm, remove_previous_files = args.remove_previous_files, n_processes = args.n_processes, plot_name = args.GaiaJWST_output+'PM_Sel', save_temporary_results = args.save_temporary_results, temporary_results_filename = args.JWST_Gaia_table_filename)
+            
+      """
+      Save Gaia and JWST tables
+      """
+      obs_table.to_csv(args.JWST_obs_table_filename, index = False)
+      data_products_by_obs.to_csv(args.JWST_data_table_products_filename, index = False)
+
+      GSCAL_images.to_csv(args.used_JWST_obs_table_filename, index = False)
+      Gaia_table_jwst.to_csv(args.JWST_Gaia_table_filename, index = False)
+      lnks.to_csv(args.lnks_summary_filename)
+
+      
+      """
+      Print a summary with the location of files
+      """
+      logresults = ' RESULTS '.center(100, '-')+'\n - Final table: %s'%args.JWST_Gaia_table_filename+'\n - Used JWST observations: %s'%args.used_JWST_obs_table_filename+'\n'+'-'*100+'\n - A total of %i stars were used during the epoch alignment.\n'%Gaia_table_jwst.use_for_alignment.sum()+' - Absolute PM of the used stars: \n'
+
+      for use_stat in ['wmean', 'mean', 'median']:
+         avg_pm = gh.weighted_avg_err(Gaia_table_jwst.loc[Gaia_table_jwst.use_for_alignment, ['hst_gaia_pmra_%s'%use_stat, 'hst_gaia_pmdec_%s'%use_stat, 'hst_gaia_pmra_%s_error'%use_stat, 'hst_gaia_pmdec_%s_error'%use_stat]])
+
+         logresults += '    - %i stars were used to compute the %s absolute frame:\n'%(Gaia_table_jwst['use_for_absolute_ref_frame_%s'%use_stat].sum(), use_stat)
+         if not (np.isnan(avg_pm['hst_gaia_pmra_%s_%s'%(use_stat, use_stat)]) and np.isnan(avg_pm['hst_gaia_pmra_%s_%s_error'%(use_stat, use_stat)])):
+            print('1', avg_pm['hst_gaia_pmra_%s_%s'%(use_stat, use_stat)], '2', avg_pm['hst_gaia_pmdec_%s_%s'%(use_stat, use_stat)])
+            logresults += '       - %s pmra'%use_stat+' = %s+-%s \n'%(gh.round_significant(avg_pm['hst_gaia_pmra_%s_%s'%(use_stat, use_stat)], avg_pm['hst_gaia_pmra_%s_%s_error'%(use_stat, use_stat)]))+'       - %s pmdec'%use_stat+' = %s+-%s \n'%(gh.round_significant(avg_pm['hst_gaia_pmdec_%s_%s'%(use_stat, use_stat)], avg_pm['hst_gaia_pmdec_%s_%s_error'%(use_stat, use_stat)]))
+
+         """
+         Plot the results
+         """
+         if args.no_plots == False:
+            # try:
+            #    gh.plot_results(Gaia_table_jwst, lnks, GSRATE_images, args.JWST_path, avg_pm, use_stat = use_stat, plot_name_1 = args.GaiaJWST_output+args.base_file_name+'_vpd', plot_name_2 = args.GaiaJWST_output+args.base_file_name+'_diff', plot_name_3 = args.GaiaJWST_output+args.base_file_name+'_cmd', plot_name_4 = args.GaiaJWST_output+args.base_file_name+'_footprint', plot_name_5 = args.GaiaJWST_output+args.base_file_name+'_errors_xy', plot_name_6 = args.GaiaJWST_output+args.base_file_name+'_errors_mag', plot_name_7 = args.GaiaJWST_output+args.base_file_name+'_errors_color', ext = '_%s.pdf'%use_stat)
+            # except:
+            #    print('There was an error when trying to plot the %s quantities...'%use_stat)
+            #    pass
+
+            gh.plot_results(Gaia_table_jwst, lnks, GSCAL_images, args.JWST_path, avg_pm, use_stat = use_stat, plot_name_1 = args.GaiaJWST_output+args.base_file_name+'_vpd', plot_name_2 = args.GaiaJWST_output+args.base_file_name+'_diff', plot_name_3 = args.GaiaJWST_output+args.base_file_name+'_cmd', plot_name_4 = args.GaiaJWST_output+args.base_file_name+'_footprint', plot_name_5 = args.GaiaJWST_output+args.base_file_name+'_errors_xy', plot_name_6 = args.GaiaJWST_output+args.base_file_name+'_errors_mag', plot_name_7 = args.GaiaJWST_output+args.base_file_name+'_errors_color', ext = '_%s.pdf'%use_stat)
+
+      logresults += '-'*100 + '\n \n Execution ended.\n'
+
+      print('\n')
+      print(logresults)
+
+      f = open(args.logfile, 'w+')
+      f.write(logresults)
+      f.close()
+
+   else:
+      print('No suitable JWST observations were found.')
+      if obs_table.empty:
+         print('Please consider using different search parameters.')
+      elif (obs_table['gaia_stars_per_obs'] < args.min_stars_alignment).any():
+         print('Not enough stars to perform the epoch alignment.')
+         print('The minimum number of stars required is currently set to %s.'%args.min_stars_alignment)
+         print('You may want to change this value using the "min_stars_alignment" and "min_stars_amp" options.')
+         print('NOTICE: Using less than 10 stars is not recomended. A minimum of 3 is required.')
+      if args.quiet:
+         print('Exiting now.')
+      else:
+         input('\nPress enter to exit.\n')
+
+   # Remove temporary links
+   # gh.remove_file(args.exec_path)
+
+if __name__ == '__main__':
+    gaiajwst(sys.argv[1:])
+    sys.exit(0)
+
+"""
+Andres del Pino Molina
+"""
+

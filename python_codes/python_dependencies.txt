@@ -1,0 +1,15 @@
+astropy
+astropy-healpix
+astroquery
+beautifulsoup4
+importlib-metadata
+joblib
+matplotlib
+numpy
+pandas
+python-dateutil
+reproject
+requests
+scikit-learn
+scipy
+Shapely
