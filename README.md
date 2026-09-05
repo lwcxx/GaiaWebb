@@ -1,10 +1,6 @@
-<p align="center">
-<img width="250" src = "https://github.com/AndresdPM/GaiaHub/assets/63738265/2d551856-bfd3-4fe0-bc8c-2c4c4cd51460" hspace="10">
-</p>
+# GaiaWebb
 
-# GaiaHub
-
-GaiaHub is a Python/Fortran tool that computes proper motions combining data from Gaia and the Hubble Space Telescope.
+GaiaWebb is a Python-only tool that computes proper motions combining data from Gaia and the James Webb Space Telescope. The python code from GaiaWebb is based on GaiaHub [del Pino et al. 2022](https://ui.adsabs.harvard.edu/abs/2022ApJ...933...76D/abstract). jwst1pass_py_v2 is a Python translation based on the Fortran JWST1Pass from [Anderson, 2022](https://ui.adsabs.harvard.edu/abs/2022acs..rept....2A/abstract) and [Libralato et al., 2023](https://iopscience.iop.org/article/10.3847/1538-4357/acd04f). The high-precision NIRISS point spread functions (PSFs) and geometric-distortion correction (GDC) were applied according to [Libralato et al., 2023](https://iopscience.iop.org/article/10.3847/1538-4357/acd04f). PSFs and GDC of MIRI and NIRCam were implemented using the [repository](https://www.stsci.edu/~jayander/JWST1PASS/).
 
 ## License and Referencing
 GaiaHub and its documentation are released under a BSD 2-clause license. GaiaHub is freely available and you can freely modify, extend, and improve the GaiaHub source code. However, if you use it for published research, you are requested to cite [del Pino et al. 2022](https://ui.adsabs.harvard.edu/abs/2022ApJ...933...76D/abstract) where the method is described.
@@ -12,7 +8,7 @@ GaiaHub and its documentation are released under a BSD 2-clause license. GaiaHub
 
 ## Features
 
-GaiaHub includes lots of useful features:
+The same as GaiaHub, GaiaWebb includes lots of useful features:
 
 * Search of objects based on names.
 * Automatic screening out of poorly measured stars.
@@ -20,45 +16,30 @@ GaiaHub includes lots of useful features:
 * Statistics about the systemic proper motions of the object.
 * Automatic generation of figures.
 
-## Installation
+## Running GaiaWebb
 
-At the moment, GaiaHub is offered as a python code that runs locally in your machine. To install it, please clone this repository and run the installation script located inside the cloned folder. The installation will check your current python environment and attempt to install or update the required python packages to run GaiaHub. We recommend creating a dedicated conda enviroment to install and run GaiaHub if you do not want to modify your current python environment. More information can be found [here](https://conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html). To proceed with the installation, open a terminal in the directory where you would like to install GaiaHub and type:
+Once the installation is completed, the user can run GaiaWebb from the terminal as:
 
-$ git clone https://github.com/AndresdPM/GaiaHub.git
-
-$ cd GaiaHub
-
-$ python install_GaiaHub.py
-
-Please follow the instructions in the screen.
-
-## Running GaiaHub
-
-Once the installation is completed, the user can run GaiaHub from the terminal as:
-
-$ gaiahub [options]
+$ python /path/to/GaiaWJWST.py
 
 For example, to compute the proper motions of NGC 5053 using only member stars, GaiaHub should be called as:
 
-$ gaiahub --name "NGC 5053" --use_members
+$ python /path/to/GaiaWJWST.py --name "NGC 5053" --use_members
 
-In this example, the results produced by GaiaHub will be stored in a subfolder called "NGC_5053".
+In this example, the results produced by GaiaWebb will be stored in a subfolder called "NGC_5053".
 
-To know more about all GaiaHub options:
+To know more about all GaiaWebb options:
 
-$ gaiaHub --help
+$ python /path/to/GaiaWJWST.py --help
 
-For more examples please see [del Pino et al. 2022](https://ui.adsabs.harvard.edu/abs/2022ApJ...933...76D/abstract) and the Documentation file (Documentation_v1.pdf).
+## Notes on GaiaWebb
 
-## Notes on Version 1.2.0
+GaiaWebb has one more argument --instrument compared to GaiaHub. The additional argument enables the selection of JWST cameras, NIRISS, MIRI, or NIRCam. 
 
-- Improved "--rewind_stars" option which iterates on the transformation fitting using Gaia-only (in the first iteration) and Gaia-HST (in subsequent iterations) PMs to provide better solutions.
-- Implemented "--load_existing" option which saves time by skipping the image checking procedure when the images have been previously downloaded.
-- Fixed bug: Gaia's positional uncertainties have been increased by default (Fabricius et al. 2021).
+The Fortran JWST1Pass has been translated to Python code. Some of the main differences between the two are:
 
-## Notes on Version 1.1.0
-
-- Fixed bug: GaiaHub will now not download HAP images.
-- New statistics added through the "--use_stat" option.
-- New iterative sigma-clipped method to obtain the absolute reference frame.
-# GaiaWebb
+1. The Python version filters out the low-quality pixels before fitting stars while the Fortran version does the filtering during the fitting.
+2. The Python version iteratively subtract neighbourhood stars, which is helpful in crowded region.
+3. The Python version fits flux, position, and sky simultaneous and the Fortran version fits them separately.
+4. The Python version has multi-pass to subtract stars to find fainter stars.
+5. Noise map and gain map are found and downloaded for each image if available.
