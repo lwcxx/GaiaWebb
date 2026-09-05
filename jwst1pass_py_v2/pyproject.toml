@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jwst1pass"
+version = "0.1.0"
+description = "Fast Python PSF-fitting photometry for JWST images (MIRI/NIRISS)"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "scipy",
+    "astropy",
+    "tqdm",
+    "joblib",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-cov"]
+fast = ["numba"]
+
+[project.scripts]
+jwst1pass_run = "scripts.jwst1pass_run:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "tests"]
