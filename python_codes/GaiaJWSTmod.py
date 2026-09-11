@@ -1457,8 +1457,9 @@ def jwst1pass_GH(JWST_path, exec_path, obs_id, JWST_image, force_fmin,
          filter = hdul[0].header['PUPIL']
       
       #add 'P' since this ending appears in previous lines... .replace('P', '')
+      #add 'C' because coronagraphic filters (e.g. F1550C, F2300C) end in 'C'
       #print("hdul filter", filter, JWST_image_filename)
-      poss_filt_ends = ['LP','L','W','M','N', 'P']
+      poss_filt_ends = ['LP','L','W','M','N', 'P', 'C']
       for filt_end in poss_filt_ends:
          if filter.endswith(filt_end):
             break
@@ -1484,6 +1485,16 @@ def jwst1pass_GH(JWST_path, exec_path, obs_id, JWST_image, force_fmin,
       psf_filt_waves = psf_filt_waves[psf_key]
       if filter in allowed_psfs['all']:
          filter_psf = filter
+      elif not allowed_psfs.get(curr_filt_end):
+         # No PSF library entries at all for this filter's category (e.g. MIRI
+         # coronagraphic filters like F1550C/F2300C, which have no STDPSF and
+         # use a physically different occulted PSF than any imaging filter).
+         # Falling back to a nearest-wavelength match would silently substitute
+         # a PSF from an incompatible filter family, so skip the image instead.
+         print(f"Skipping {JWST_image}: filter '{filter}' has no PSF library entry for "
+               f"'{psf_key}' in {psf_path}, and no other '{curr_filt_end}'-type filters "
+               f"are available to fall back on. This filter is not supported by this pipeline.")
+         return ''
       else:
          curr_wave = int(filter.replace(r'F', '').replace(curr_filt_end,''))
          wave_diffs = np.abs(curr_wave-psf_filt_waves['waves'])
@@ -1869,8 +1880,9 @@ def jwst1pass_GH(JWST_path, exec_path, obs_id, JWST_image, force_fmin,
          filter = hdul[0].header['PUPIL']
       
       #add 'P' since this ending appears in previous lines... .replace('P', '')
+      #add 'C' because coronagraphic filters (e.g. F1550C, F2300C) end in 'C'
       #print("hdul filter", filter, JWST_image_filename)
-      poss_filt_ends = ['LP','L','W','M','N', 'P']
+      poss_filt_ends = ['LP','L','W','M','N', 'P', 'C']
       for filt_end in poss_filt_ends:
          if filter.endswith(filt_end):
             break
@@ -1891,6 +1903,16 @@ def jwst1pass_GH(JWST_path, exec_path, obs_id, JWST_image, force_fmin,
       psf_filt_waves = psf_filt_waves[f'{instrument}']
       if filter in allowed_psfs['all']:
          filter_psf = filter
+      elif not allowed_psfs.get(curr_filt_end):
+         # No PSF library entries at all for this filter's category (e.g. MIRI
+         # coronagraphic filters like F1550C/F2300C, which have no STDPSF and
+         # use a physically different occulted PSF than any imaging filter).
+         # Falling back to a nearest-wavelength match would silently substitute
+         # a PSF from an incompatible filter family, so skip the image instead.
+         print(f"Skipping {JWST_image}: filter '{filter}' has no PSF library entry for "
+               f"'{instrument}' in {psf_path}, and no other '{curr_filt_end}'-type filters "
+               f"are available to fall back on. This filter is not supported by this pipeline.")
+         return ''
       else:
          curr_wave = int(filter.replace(r'F', '').replace(curr_filt_end,''))
          wave_diffs = np.abs(curr_wave-psf_filt_waves['waves'])
