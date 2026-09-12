@@ -1397,157 +1397,169 @@ def jwst1pass_GH(JWST_path, exec_path, obs_id, JWST_image, force_fmin,
    if os.path.isfile(XYmqxyrd_filename):
       good_image = True
         
-   if not os.path.isfile(XYmqxyrd_filename):
-      print('this if statement is executed', XYmqxyrd_filename)
-      if verbose:
-         print('Finding sources in', JWST_image)
+   if verbose:
+      print('Finding sources in', JWST_image)
 
-      if not os.path.isfile(JWST_image_filename):
-         print(f'RSKIPPING image {JWST_image} because no JWST image was found')
-         return ''
+   if not os.path.isfile(JWST_image_filename):
+      print(f'RSKIPPING image {JWST_image} because no JWST image was found')
+      return ''
 
-      if python_jwst1pass:
-         os.environ['PYTHONPATH'] = os.environ.get('PYTHONPATH', '') + ':' + os.path.abspath(os.path.join(exec_path, 'jwst1pass_py_v2'))
+   if python_jwst1pass:
+      os.environ['PYTHONPATH'] = os.environ.get('PYTHONPATH', '') + ':' + os.path.abspath(os.path.join(exec_path, 'jwst1pass_py_v2'))
 
-      #Read information from the header of the image
-      hdul = fits.open(JWST_image_filename)
-      instrument = hdul[0].header['INSTRUME']
-      detector = hdul[0].header['DETECTOR']
+   #Read information from the header of the image
+   hdul = fits.open(JWST_image_filename)
+   instrument = hdul[0].header['INSTRUME']
+   detector = hdul[0].header['DETECTOR']
 
-      # Map NIRCam header detector names to library naming conventions
-      if instrument == 'NIRCAM':
-         lib_instrument = 'NIRCam'
-         if detector == 'NRCALONG':
-            detector_label = 'NRCAL'
-         elif detector == 'NRCBLONG':
-            detector_label = 'NRCBL'
-         else:
-            detector_label = detector   # NRCA1..NRCB4
-         nircam_channel = 'LWC' if detector_label in ('NRCAL', 'NRCBL') else 'SWC'
-         psf_key = detector_label
+   # Map NIRCam header detector names to library naming conventions
+   if instrument == 'NIRCAM':
+      lib_instrument = 'NIRCam'
+      if detector == 'NRCALONG':
+         detector_label = 'NRCAL'
+      elif detector == 'NRCBLONG':
+         detector_label = 'NRCBL'
       else:
-         lib_instrument = instrument
-         nircam_channel = None
-         psf_key = instrument
+         detector_label = detector   # NRCA1..NRCB4
+      nircam_channel = 'LWC' if detector_label in ('NRCAL', 'NRCBL') else 'SWC'
+      psf_key = detector_label
+   else:
+      lib_instrument = instrument
+      nircam_channel = None
+      psf_key = instrument
 
-      for hdr_ind in range(len(hdul)):
-         if ('CRPIX1' in hdul[hdr_ind].header):
-            x_ref,y_ref = hdul[hdr_ind].header['CRPIX1'],hdul[hdr_ind].header['CRPIX2']
-            ra_ref,dec_ref = hdul[hdr_ind].header['CRVAL1'],hdul[hdr_ind].header['CRVAL2']
-            curr_coords = [x_ref,y_ref]
-            if curr_coords not in ref_coords:
-               ref_coords.append(curr_coords)
-            # print(hdr_ind,hdul[0].header['INSTRUME'],hdul[0].header['DETECTOR'],hdul[hdr_ind].header['CCDCHIP'],x,y,ra,dec)
-      for test_coord in [[1024.5,1024.5]]:
-         if test_coord not in ref_coords:
+   for hdr_ind in range(len(hdul)):
+      if ('CRPIX1' in hdul[hdr_ind].header):
+         x_ref,y_ref = hdul[hdr_ind].header['CRPIX1'],hdul[hdr_ind].header['CRPIX2']
+         ra_ref,dec_ref = hdul[hdr_ind].header['CRVAL1'],hdul[hdr_ind].header['CRVAL2']
+         curr_coords = [x_ref,y_ref]
+         if curr_coords not in ref_coords:
             ref_coords.append(curr_coords)
-      ref_coords = np.array(ref_coords)
-        
-      #print("hdul", hdul)
+         # print(hdr_ind,hdul[0].header['INSTRUME'],hdul[0].header['DETECTOR'],hdul[hdr_ind].header['CCDCHIP'],x,y,ra,dec)
+   for test_coord in [[1024.5,1024.5]]:
+      if test_coord not in ref_coords:
+         ref_coords.append(curr_coords)
+   ref_coords = np.array(ref_coords)
+     
+   #print("hdul", hdul)
 
-      # filter = hdul[0].header['PUPIL']
-      # try:
-      #    filter = [filter for filter in [hdul[0].header['FILTER1'], hdul[0].header['FILTER2']] if 'CLEAR' not in filter][0]
-      # except:
-      if 'FILTER' in hdul[0].header:
-         filter = hdul[0].header['FILTER']
-         if 'CLEAR' in filter:
-            filter = hdul[0].header['PUPIL']
-      else:
+   # filter = hdul[0].header['PUPIL']
+   # try:
+   #    filter = [filter for filter in [hdul[0].header['FILTER1'], hdul[0].header['FILTER2']] if 'CLEAR' not in filter][0]
+   # except:
+   if 'FILTER' in hdul[0].header:
+      filter = hdul[0].header['FILTER']
+      if 'CLEAR' in filter:
          filter = hdul[0].header['PUPIL']
-      
-      #add 'P' since this ending appears in previous lines... .replace('P', '')
-      #add 'C' because coronagraphic filters (e.g. F1550C, F2300C) end in 'C'
-      #print("hdul filter", filter, JWST_image_filename)
-      poss_filt_ends = ['LP','L','W','M','N', 'P', 'C']
-      for filt_end in poss_filt_ends:
-         if filter.endswith(filt_end):
-            break
-      curr_filt_end = filt_end
+   else:
+      filter = hdul[0].header['PUPIL']
 
-      #check to see if that filter is availabe in PSF,
-      #and if not, grabs the closest
+   # NIRCam coronagraphic masks (MASKA210R, MASKA335R, MASKA430R, MASKALWB,
+   # MASKASWB, MASKB210R, ... — all begin with 'MASK') sit in the PUPIL
+   # wheel while FILTER still reports an ordinary, library-supported filter
+   # name (e.g. FILTER='F210M', PUPIL='MASKA210R'). Unlike MIRI's 'C'-suffix
+   # coronagraphic filters, this would slip past the filter-based check
+   # below undetected and get processed as normal full-frame imaging with
+   # the wrong (unocculted) PSF.
+   pupil_kw = hdul[0].header.get('PUPIL', '')
+   if isinstance(pupil_kw, str) and pupil_kw.upper().startswith('MASK'):
+      print(f"Skipping {JWST_image}: PUPIL='{pupil_kw}' indicates a NIRCam "
+            f"coronagraphic occulting mask is in place. Coronagraphic imaging "
+            f"is not supported by this pipeline.")
+      return ''
 
-      # gdc_path = f'{exec_path}/lib/STDGDCs/'
-      # allowed_gdcs = availabe_GDCs(gdc_path)[f'{instrument}{detector}']
+   #add 'P' since this ending appears in previous lines... .replace('P', '')
+   #add 'C' because coronagraphic filters (e.g. F1550C, F2300C) end in 'C'
+   #print("hdul filter", filter, JWST_image_filename)
+   poss_filt_ends = ['LP','L','W','M','N', 'P', 'C']
+   for filt_end in poss_filt_ends:
+      if filter.endswith(filt_end):
+         break
+   curr_filt_end = filt_end
 
-      psf_path = f'{exec_path}/lib/STDPSFs/'
-      allowed_psfs,psf_filt_waves = availabe_PSFs(psf_path)
-      #print('allowed_psfs', allowed_psfs)
-      if psf_key not in allowed_psfs:
-         raise KeyError(f"PSF library key '{psf_key}' not found in {psf_path}. "
-                        f"Available keys: {sorted(allowed_psfs.keys())}. "
-                        f"Check that NIRCam PSF files exist for detector '{psf_key}' "
-                        f"and that availabe_PSFs() uses os.walk (not os.listdir) for the NIRCam directory.")
-      allowed_psfs = allowed_psfs[psf_key]
-      #allowed_psfs = allowed_psfs[f'{instrument}{detector}']
-      #psf_filt_waves = psf_filt_waves[f'{instrument}{detector}']
-      psf_filt_waves = psf_filt_waves[psf_key]
-      if filter in allowed_psfs['all']:
-         filter_psf = filter
-      elif not allowed_psfs.get(curr_filt_end):
-         # No PSF library entries at all for this filter's category (e.g. MIRI
-         # coronagraphic filters like F1550C/F2300C, which have no STDPSF and
-         # use a physically different occulted PSF than any imaging filter).
-         # Falling back to a nearest-wavelength match would silently substitute
-         # a PSF from an incompatible filter family, so skip the image instead.
-         print(f"Skipping {JWST_image}: filter '{filter}' has no PSF library entry for "
-               f"'{psf_key}' in {psf_path}, and no other '{curr_filt_end}'-type filters "
-               f"are available to fall back on. This filter is not supported by this pipeline.")
+   #check to see if that filter is availabe in PSF,
+   #and if not, grabs the closest
+
+   # gdc_path = f'{exec_path}/lib/STDGDCs/'
+   # allowed_gdcs = availabe_GDCs(gdc_path)[f'{instrument}{detector}']
+
+   psf_path = f'{exec_path}/lib/STDPSFs/'
+   allowed_psfs,psf_filt_waves = availabe_PSFs(psf_path)
+   #print('allowed_psfs', allowed_psfs)
+   if psf_key not in allowed_psfs:
+      raise KeyError(f"PSF library key '{psf_key}' not found in {psf_path}. "
+                     f"Available keys: {sorted(allowed_psfs.keys())}. "
+                     f"Check that NIRCam PSF files exist for detector '{psf_key}' "
+                     f"and that availabe_PSFs() uses os.walk (not os.listdir) for the NIRCam directory.")
+   allowed_psfs = allowed_psfs[psf_key]
+   #allowed_psfs = allowed_psfs[f'{instrument}{detector}']
+   #psf_filt_waves = psf_filt_waves[f'{instrument}{detector}']
+   psf_filt_waves = psf_filt_waves[psf_key]
+   if filter in allowed_psfs['all']:
+      filter_psf = filter
+   elif not allowed_psfs.get(curr_filt_end):
+      # No PSF library entries at all for this filter's category (e.g. MIRI
+      # coronagraphic filters like F1550C/F2300C, which have no STDPSF and
+      # use a physically different occulted PSF than any imaging filter).
+      # Falling back to a nearest-wavelength match would silently substitute
+      # a PSF from an incompatible filter family, so skip the image instead.
+      print(f"Skipping {JWST_image}: filter '{filter}' has no PSF library entry for "
+            f"'{psf_key}' in {psf_path}, and no other '{curr_filt_end}'-type filters "
+            f"are available to fall back on. This filter is not supported by this pipeline.")
+      return ''
+   else:
+      curr_wave = int(filter.replace(r'F', '').replace(curr_filt_end,''))
+      wave_diffs = np.abs(curr_wave-psf_filt_waves['waves'])
+      best_diff = np.min(wave_diffs)
+      best_match_inds = np.where(wave_diffs== best_diff)[0]
+      best_match_filts = psf_filt_waves['filters'][best_match_inds]
+      if len(best_match_inds) == 0:
+         best_match_ind = best_match_inds[0]
+         filter_psf = psf_filt_waves['filters'][best_match_ind]
+      else:
+         #maybe change in the future to consider which order of
+         #filters (L,W,M,N) to check in order
+         best_match_ind = best_match_inds[0]
+         filter_psf = psf_filt_waves['filters'][best_match_ind]
+
+   # # No standard PSF library for F555W filter. We use the F606W.
+   # if ('F555W' in filter) and (instrument == 'ACS') and (detector == 'WFC'):
+   #    filter_psf = filter.replace('F555W', 'F606W')
+   # else:
+   #    filter_psf = filter
+
+   t_max = hdul[0].header['EXPEND']
+
+   if force_fmin is None:
+      exptime = hdul[0].header['EFFINTTM']
+      fmin = get_fmin(exptime)*auto_fmin_mult
+      # if fmin == 10000:
+      #    print('Skipping %s. because of large integration time, %.2f sec'%(HST_image,exptime))
+      #    return
+      # if exptime > 1300:
+      # if exptime > 1500:
+      if exptime > 1800:
+         print('Skipping %s because of large integration time (%.2f sec).'%(JWST_image,exptime))
          return ''
+   else:
+      fmin = force_fmin
+
+   if verbose:
+      print('%s exptime = %.1f. Using fmin = %i'%(JWST_image, hdul[0].header['EFFINTTM'], fmin))
+
+   #psf_filename = '%s/lib/STDPSFs/%s%s/STDPSF_%s%s_%s.fits'%(exec_path, instrument, detector, instrument, detector, filter_psf)
+   #gdc_filename = '%s/lib/STDGDCs/%s%s/STDGDC_%s%s_%s.fits'%(exec_path, instrument, detector, instrument, detector, filter)
+   if instrument == 'NIRCAM':
+      if nircam_channel == 'SWC':
+         psf_filename = f'{exec_path}/lib/STDPSFs/NIRCam/SWC/{filter_psf}/STDPSF_{detector_label}_{filter_psf}.fits'
+         gdc_filename = f'{exec_path}/lib/STDGDCs/NIRCam/SWC/{filter_psf}/STDGDC_{detector_label}_{filter_psf}.fits'
       else:
-         curr_wave = int(filter.replace(r'F', '').replace(curr_filt_end,''))
-         wave_diffs = np.abs(curr_wave-psf_filt_waves['waves'])
-         best_diff = np.min(wave_diffs)
-         best_match_inds = np.where(wave_diffs== best_diff)[0]
-         best_match_filts = psf_filt_waves['filters'][best_match_inds]
-         if len(best_match_inds) == 0:
-            best_match_ind = best_match_inds[0]
-            filter_psf = psf_filt_waves['filters'][best_match_ind]
-         else:
-            #maybe change in the future to consider which order of
-            #filters (L,W,M,N) to check in order
-            best_match_ind = best_match_inds[0]
-            filter_psf = psf_filt_waves['filters'][best_match_ind]
-
-      # # No standard PSF library for F555W filter. We use the F606W.
-      # if ('F555W' in filter) and (instrument == 'ACS') and (detector == 'WFC'):
-      #    filter_psf = filter.replace('F555W', 'F606W')
-      # else:
-      #    filter_psf = filter
-
-      t_max = hdul[0].header['EXPEND']
-
-      if force_fmin is None:
-         exptime = hdul[0].header['EFFINTTM']
-         fmin = get_fmin(exptime)*auto_fmin_mult
-         # if fmin == 10000:
-         #    print('Skipping %s. because of large integration time, %.2f sec'%(HST_image,exptime))
-         #    return
-         # if exptime > 1300:
-         # if exptime > 1500:
-         if exptime > 1800:
-            print('Skipping %s because of large integration time (%.2f sec).'%(JWST_image,exptime))
-            return ''
-      else:
-         fmin = force_fmin
-
-      if verbose:
-         print('%s exptime = %.1f. Using fmin = %i'%(JWST_image, hdul[0].header['EFFINTTM'], fmin))
-
-      #psf_filename = '%s/lib/STDPSFs/%s%s/STDPSF_%s%s_%s.fits'%(exec_path, instrument, detector, instrument, detector, filter_psf)
-      #gdc_filename = '%s/lib/STDGDCs/%s%s/STDGDC_%s%s_%s.fits'%(exec_path, instrument, detector, instrument, detector, filter)
-      if instrument == 'NIRCAM':
-         if nircam_channel == 'SWC':
-            psf_filename = f'{exec_path}/lib/STDPSFs/NIRCam/SWC/{filter_psf}/STDPSF_{detector_label}_{filter_psf}.fits'
-            gdc_filename = f'{exec_path}/lib/STDGDCs/NIRCam/SWC/{filter_psf}/STDGDC_{detector_label}_{filter_psf}.fits'
-         else:
-            psf_filename = f'{exec_path}/lib/STDPSFs/NIRCam/LWC/STDPSF_{detector_label}_{filter_psf}.fits'
-            gdc_filename = f'{exec_path}/lib/STDGDCs/NIRCam/LWC/STDGDC_{detector_label}_{filter_psf}.fits'
-      else:
-         psf_filename = '%s/lib/STDPSFs/%s/STDPSF_%s_%s.fits'%(exec_path, lib_instrument, lib_instrument, filter_psf)
-         gdc_filename = '%s/lib/STDGDCs/%s/STDGDC_%s_%s.fits'%(exec_path, lib_instrument, lib_instrument, filter)
-      print('psf_filename', psf_filename)
+         psf_filename = f'{exec_path}/lib/STDPSFs/NIRCam/LWC/STDPSF_{detector_label}_{filter_psf}.fits'
+         gdc_filename = f'{exec_path}/lib/STDGDCs/NIRCam/LWC/STDGDC_{detector_label}_{filter_psf}.fits'
+   else:
+      psf_filename = '%s/lib/STDPSFs/%s/STDPSF_%s_%s.fits'%(exec_path, lib_instrument, lib_instrument, filter_psf)
+      gdc_filename = '%s/lib/STDGDCs/%s/STDGDC_%s_%s.fits'%(exec_path, lib_instrument, lib_instrument, filter)
+   print('psf_filename', psf_filename)
    if (not os.path.isfile(XYmqxyrd_filename)) or (not os.path.isfile(art_fname)):
       if (os.path.isfile(psf_filename) or print_only) and os.path.isfile(gdc_filename):
          n_repeat = 0
@@ -1878,7 +1890,21 @@ def jwst1pass_GH(JWST_path, exec_path, obs_id, JWST_image, force_fmin,
             filter = hdul[0].header['PUPIL']
       else:
          filter = hdul[0].header['PUPIL']
-      
+
+      # NIRCam coronagraphic masks (MASKA210R, MASKA335R, MASKA430R, MASKALWB,
+      # MASKASWB, MASKB210R, ... — all begin with 'MASK') sit in the PUPIL
+      # wheel while FILTER still reports an ordinary, library-supported filter
+      # name (e.g. FILTER='F210M', PUPIL='MASKA210R'). Unlike MIRI's 'C'-suffix
+      # coronagraphic filters, this would slip past the filter-based check
+      # below undetected and get processed as normal full-frame imaging with
+      # the wrong (unocculted) PSF.
+      pupil_kw = hdul[0].header.get('PUPIL', '')
+      if isinstance(pupil_kw, str) and pupil_kw.upper().startswith('MASK'):
+         print(f"Skipping {JWST_image}: PUPIL='{pupil_kw}' indicates a NIRCam "
+               f"coronagraphic occulting mask is in place. Coronagraphic imaging "
+               f"is not supported by this pipeline.")
+         return ''
+
       #add 'P' since this ending appears in previous lines... .replace('P', '')
       #add 'C' because coronagraphic filters (e.g. F1550C, F2300C) end in 'C'
       #print("hdul filter", filter, JWST_image_filename)
